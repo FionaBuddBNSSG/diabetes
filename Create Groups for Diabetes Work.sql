@@ -7,7 +7,8 @@
 
 DROP TABLE IF EXISTS [modelling_sql_area].[dbo].[FB_diab_procedures]	
 
-/* limit period to exclude dates with no data from Mendip Vale */
+/* limit period to exclude dates with no data from Mendip Vale
+	Uses CMS Segment from START of the procedure*/
 
 DECLARE @STARTDATE AS Datetime
 SET @STARTDATE =  '20201001'
@@ -216,7 +217,7 @@ a.AIMTC_PracticeCodeOfRegisteredGP,
 
 											
 FROM abi.dbo.vw_APC_SEM_001 a	
-LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] c on a.[AIMTC_Pseudo_NHS] = c.nhs_number and AIMTC_ProviderSpell_End_Date >= c.attribute_period and AIMTC_ProviderSpell_End_Date <= EOMONTH(c.attribute_period,0)
+LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] c on a.[AIMTC_Pseudo_NHS] = c.nhs_number and AIMTC_ProviderSpell_start_Date >= c.attribute_period and AIMTC_ProviderSpell_Start_Date <= EOMONTH(c.attribute_period,0)
 
 
 WHERE a.AIMTC_ProviderSpell_End_Date between @STARTDATE AND @ENDDATE
@@ -315,6 +316,7 @@ AND a.AIMTC_AGE >= 17
 )
 
 --Create a temp table with distinct rows
+
 SELECT distinct *
 INTO #tempproc from cte_proc 	
 
@@ -323,9 +325,13 @@ Select *, ROW_NUMBER() OVER(PARTITION BY nhs_number ORDER BY AIMTC_ProviderSpell
 INTO [modelling_sql_area].[dbo].[FB_diab_procedures]
 from #tempproc	
 
+
+DROP TABLE IF EXISTS #tempproc
+
 ---------------------------------------------------------------------------CREATE GROUP 2 ---------------------------------------------------------------------------
 /* Group 2. Adults with Type 2 diabetes who had at least two hospital admissions 
-within a 12 month period AND/OR three or more A&E visits over the same 12 month period.*/
+within a 12 month period AND/OR three or more A&E visits over the same 12 month period.
+Uses CMS Segment & Attributes from START of the spell*/
 
 DROP TABLE IF EXISTS [modelling_sql_area].[dbo].[FB_diab_admissions];
 
@@ -350,7 +356,7 @@ WITH cte_admissions_ip AS (
 		[MODELLING_SQL_AREA].[dbo].[swd_activity_kept_analystview] a 
 		LEFT JOIN MODELLING_SQL_AREA.dbo.primary_care_attributes b on a.nhs_number = b.nhs_number and dep_date >= b.attribute_period and dep_date <= EOMONTH(b.attribute_period,0)
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] c on a.nhs_number = c.nhs_number and dep_date >= c.attribute_period and dep_date <= EOMONTH(c.attribute_period,0)
-	WHERE (b.diabetes_1 = 1 or b.diabetes_2 = 1 or pre_diabetes = 1) 
+	WHERE (b.diabetes_2 = 1) 
 	AND b.practice_code not in ('L81055', 'L81067')
 	AND a.Main_POD = 'secondary'  
 	AND a.specific_POD in ('ip elective', 'ip non_elective') 
@@ -405,7 +411,7 @@ cte_admissions_ae AS (
 		[MODELLING_SQL_AREA].[dbo].[swd_activity_kept_analystview] a 
 		LEFT JOIN MODELLING_SQL_AREA.dbo.primary_care_attributes b on a.nhs_number = b.nhs_number and dep_date >= b.attribute_period and dep_date <= EOMONTH(b.attribute_period,0)
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] c on a.nhs_number = c.nhs_number and dep_date >= c.attribute_period and dep_date <= EOMONTH(c.attribute_period,0)
-	WHERE (b.diabetes_1 = 1 or b.diabetes_2 = 1 or b.pre_diabetes = 1) 
+	WHERE (b.diabetes_2 = 1 ) 
 	AND b.practice_code not in ('L81055', 'L81067')
 	AND a.Main_POD = 'secondary'  
 	AND a.specific_POD in ('ae') 
@@ -453,22 +459,31 @@ DROP TABLE IF EXISTS [modelling_sql_area].[dbo].[FB_diab_basepop]
 
 Select * 
 INTO [modelling_sql_area].[dbo].[FB_diab_basepop] 
-FROM (SELECT a.nhs_number, segment, a. diabetes_1, a.diabetes_2, 
+FROM (SELECT a.nhs_number, segment, a.diabetes_2, 
 		a.age, a.smoking, a.bmi, a.sex, a.lsoa, a.is_carer, a.practice_code,
-			a.attribute_period, 
+			a.attribute_period, CASE WHEN c.[main group] IS NULL THEN ' Unknown'
+			 WHEN c.[main group] = 'NA' THEN ' Unknown' 
+			 WHEN c.[main group] = 'Unknown' THEN ' Unknown'
+			 WHEN c.[main group] = 'Not stated' THEN ' Unknown' 
+			 WHEN c.[main group] = ' Not stated' THEN ' Unknown'
+			 WHEN c.[Ethnicity_description] = 'British or mixed British - ethnic category 2001 census' THEN ' White'
+			 ELSE concat(' ', c.[main group]) END AS 'Main_ethnic_group',
 				ROW_NUMBER() OVER(PARTITION BY a.NHS_number ORDER BY a.attribute_period DESC)  AS 'RN_1' --this means the final entry = 1
-		From [MODELLING_SQL_AREA].dbo.[primary_care_attributes] a
+		From (Select * from [MODELLING_SQL_AREA].dbo.[primary_care_attributes] where diabetes_2 = 1
+																				AND age >17 
+																					AND a.attribute_period between @STARTDATE and @ENDDATE
+																						AND practice_code not in ('L81055', 'L81067'))  a
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] b  on a.nhs_number = b.nhs_number AND a.attribute_period = b. attribute_period
-		WHERE (diabetes_1 = 1 OR diabetes_2 = 1 OR pre_diabetes = 1) 
-			AND a.attribute_period between @STARTDATE and @ENDDATE
-				AND a.Age >= 17
-					AND b.practice_code not in ('L81055', 'L81067')) a WHERE RN_1 = 1
+		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[swd_ethnicity_groupings] c on a.[ethnicity] = c.[Ethnicity_description] ) a
+		WHERE RN_1 = 1
 
----------------------------------------------------------------------------Create the Table ---------------------------------------------------------------------------
+---------------------------------------------------------------------------Create the MPI Table ---------------------------------------------------------------------------
+/* Uses the latest CMS data for everyone*/
+
 
 DROP TABLE IF EXISTS [modelling_sql_area].[dbo].[FB_diab]	
 
-select a.nhs_number, a.diabetes_1, a.diabetes_2,
+select a.nhs_number, a.diabetes_2,
 CASE WHEN b.nhs_number IS NOT NULL AND c.nhs_number IS NULL THEN 1
 	WHEN b.nhs_number IS NULL AND c.nhs_number IS NOT NULL THEN 2
 	WHEN b.nhs_number IS NOT NULL AND c.nhs_number IS NOT NULL  THEN 3
@@ -486,7 +501,9 @@ ELSE 'Unknown' END AS 'BMI',
 a.sex,
 a.is_carer,
 f.segment,
-f.practice_code
+f.practice_code,
+a.attribute_period,
+a.Main_ethnic_group
 INTO [modelling_sql_area].[dbo].[FB_diab]	
 -- DECLARE @PERIOD AS Datetime
 --SET @PERIOD =  '20210901'
@@ -497,6 +514,6 @@ LEFT JOIN (select distinct(NHS_number) from [modelling_sql_area].[dbo].[FB_diab_
 LEFT JOIN analyst_sql_area.dbo.tbl_BNSSG_Lookups_GP d on a.practice_code = d.Practice_Code
 LEFT JOIN [Analyst_SQL_Area].[dbo].[Lkup_England_IMD_by_LSOA] e on a.lsoa = e.[LSOA code (2011)]
 LEFT JOIN modelling_sql_area.dbo.new_cambridge_score f on a.nhs_number = f.nhs_number and a.attribute_period = f.attribute_period
-WHERE (a.diabetes_1 = 1 OR a.diabetes_2 = 1) AND a.age>= 17
+
 
 
