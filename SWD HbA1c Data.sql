@@ -1,4 +1,7 @@
 ---No. of distinct patients per year with Type 2 Diabetes, i.e. distinct in each year--------------------------------------------------
+
+--FB NOTE: The below finds distinct practices with PCN
+
 SELECT DISTINCT (c.[practice_code]) AS 'Practice Code',LOWER(d.[PCN]) AS PCN
 INTO #PCNLookup
 FROM [MODELLING_SQL_AREA].[dbo].[swd_attribute] c
@@ -9,12 +12,15 @@ INSERT INTO #PCNLookup ([Practice Code],[PCN])
 --SELECT * FROM #PCNLookup
 --DROP TABLE #PCNLookup
 
+--FB NOTE: Add the unique PCN details from above to SWD for the 
+
 SELECT a.[nhs_number] AS 'NHS Number',a.[Practice_Code],b.PCN,a.[attribute_period] AS 'Date',
 		CASE WHEN DATEPART(quarter,a.[attribute_period])=1 THEN datename(yy,dateadd(yy,-1,a.[attribute_period]))+'-'+datename(yy,a.[attribute_period])
 			ELSE datename(yy,a.[attribute_period])+'-'+datename(yy,dateadd(yy,1,a.[attribute_period])) END AS Year 
 INTO #ALLPatients
 FROM [MODELLING_SQL_AREA].[dbo].[primary_care_attributes] a -- Historic Data to get all Patients
 		LEFT JOIN #PCNLookup b on a.[practice_code] = b.[Practice Code]
+--FB NOTE diabetes_2 used to identify individuals: 
 WHERE [diabetes_2]=1 AND a.[nhs_number] IS NOT NULL
 GROUP BY a.[nhs_number],a.[Practice_Code],b.PCN,a.[attribute_period] 
 
@@ -34,12 +40,14 @@ order by [NHS Number]
 --SELECT * FROM #LatestPCN
 --DROP TABLE #LatestPCN
 
+--FB NOTE: Create a count of patients by PCN and year
 SELECT count(distinct(z.[NHS Number])) AS 'No. of Distinct Patients',z.[PCN],g.[Year] 
 FROM #LatestPCN z 
 		RIGHT JOIN #ALLPatients g ON z.[NHS Number] = g.[NHS number] 
 GROUP BY z.[PCN],g.[Year] 
 
 --------------Distinct Type 2 Diabetes Patients showing who has and has not been tested--------------------------------------------------------------------------------------------
+--FB MOTE: Creates a distinct list of patients by year
 SELECT distinct(z.[NHS Number]),z.[PCN],g.[Year] 
 INTO #TESTS
 FROM #LatestPCN z 
@@ -48,8 +56,10 @@ FROM #LatestPCN z
 --SELECT * FROM #TESTS
 --DROP TABLE #TESTS
 
+--FB NOTE: uses the distinct list of patients by PCN & Year to 
 SELECT distinct(g.[NHS Number]),g.[PCN],g.[Year], h.[Measurement Year], CASE WHEN h.[Measurement Year] IS NULL THEN 'Not had Check' ELSE 'Has had a Check' END AS 'Has had a HbA1c Check' 
 FROM #TESTS g
+--FB NOTE: NOT SURE THIS SCRIPT HAS CREATED #ThoseTested BY THIS POINT?
 		LEFT JOIN #ThoseTested h 
 			ON g.[NHS Number] = h.[NHS number] 
 				AND g.[Year] = h.[Measurement Year] 
