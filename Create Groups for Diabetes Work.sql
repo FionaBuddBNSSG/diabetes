@@ -523,7 +523,8 @@ a.is_carer,
 a.segment,
 a.practice_code,
 a.attribute_period,
-a.Main_ethnic_group
+a.Main_ethnic_group,
+a.AGE
 INTO [modelling_sql_area].[dbo].[FB_diab]	
 -- DECLARE @PERIOD AS Datetime
 --SET @PERIOD =  '20210901'
