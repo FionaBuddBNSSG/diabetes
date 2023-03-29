@@ -10,12 +10,15 @@ DROP TABLE IF EXISTS [modelling_sql_area].[dbo].[FB_diab_procedures]
 /* limit period to exclude dates with no data from Mendip Vale
 	Uses CMS Segment from START of the procedure*/
 
-DECLARE @STARTDATE AS Datetime
-SET @STARTDATE =  '20201001'
-DECLARE @ENDDATE AS Datetime
-SET @ENDDATE =  '20210930' 
 DECLARE @PERIOD AS Datetime
-SET @PERIOD =  '20211001';
+SET @PERIOD =  (select max(attribute_period) from modelling_sql_area.dbo.primary_care_attributes)
+DECLARE @STARTDATE AS Datetime
+SET @STARTDATE =  DATEADD(year, -1, @PERIOD)
+DECLARE @ENDDATE AS Datetime
+SET @ENDDATE =  @PERIOD - 1 
+;
+
+
 
 WITH cte_proc AS 
 (
@@ -312,6 +315,10 @@ OR left (a.DiagnosisPrimary_ICD,4) IN ('A400', 'A401','A402', 'A403','A408', 'A4
 			OR Left(a.Diagnosis17thSecondary_ICD,3) IN ('L97') OR Left(a.Diagnosis18thSecondary_ICD,3) IN ('L97') OR Left(a.Diagnosis19thSecondary_ICD,3) IN ('L97') OR Left(a.Diagnosis20thSecondary_ICD,3) IN ('L97')
 			OR Left(a.Diagnosis21stSecondary_ICD,3) IN ('L97') OR Left(a.Diagnosis22ndSecondary_ICD,3) IN ('L97') OR Left(a.Diagnosis23rdSecondary_ICD,3) IN ('L97')))
 AND a.AIMTC_PracticeCodeOfRegisteredGP NOT IN ('L81055', 'L81067')
+	AND a.AIMTC_PracticeCodeOfRegisteredGP not in ('L81669', --Monks Park, no data from Dec 2022
+								'L81036', --Coniston, no data before Jun 2022
+								'L81086' -- Mendip Vale, no data from Dec 2022
+								)
 AND a.AIMTC_AGE >= 17
 )
 
@@ -358,6 +365,10 @@ WITH cte_admissions_ip AS (
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] c on a.nhs_number = c.nhs_number and dep_date >= c.attribute_period and dep_date <= EOMONTH(c.attribute_period,0)
 	WHERE (b.diabetes_2 = 1) 
 	AND b.practice_code not in ('L81055', 'L81067')
+	AND b.practice_code not in ('L81669', --Monks Park, no data from Dec 2022
+								'L81036', --Coniston, no data before Jun 2022
+								'L81086' -- Mendip Vale, no data from Dec 2022
+								)
 	AND a.Main_POD = 'secondary'  
 	AND a.specific_POD in ('ip elective', 'ip non_elective') 
 	AND b.age >= 17
@@ -413,6 +424,10 @@ cte_admissions_ae AS (
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] c on a.nhs_number = c.nhs_number and dep_date >= c.attribute_period and dep_date <= EOMONTH(c.attribute_period,0)
 	WHERE (b.diabetes_2 = 1 ) 
 	AND b.practice_code not in ('L81055', 'L81067')
+	AND b.practice_code not in ('L81669', --Monks Park, no data from Dec 2022
+								'L81036', --Coniston, no data before Jun 2022
+								'L81086' -- Mendip Vale, no data from Dec 2022
+								)
 	AND a.Main_POD = 'secondary'  
 	AND a.specific_POD in ('ae') 
 	AND b.age >= 17
@@ -471,8 +486,13 @@ FROM (SELECT a.nhs_number, segment, a.diabetes_2,
 				ROW_NUMBER() OVER(PARTITION BY a.NHS_number ORDER BY a.attribute_period DESC)  AS 'RN_1' --this means the final entry = 1
 		From (Select * from [MODELLING_SQL_AREA].dbo.[primary_care_attributes] where diabetes_2 = 1
 																				AND age >17 
-																					AND a.attribute_period between @STARTDATE and @ENDDATE
-																						AND practice_code not in ('L81055', 'L81067'))  a
+																					AND attribute_period between @STARTDATE and @ENDDATE
+																						AND practice_code not in ('L81055', 'L81067')
+																						AND practice_code not in ('L81669', --Monks Park, no data from Dec 2022
+																													'L81036', --Coniston, no data before Jun 2022
+																													'L81086' -- Mendip Vale, no data from Dec 2022
+																													)
+				)  a
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[new_cambridge_score] b  on a.nhs_number = b.nhs_number AND a.attribute_period = b. attribute_period
 		LEFT JOIN [MODELLING_SQL_AREA].[dbo].[swd_ethnicity_groupings] c on a.[ethnicity] = c.[Ethnicity_description] ) a
 		WHERE RN_1 = 1
@@ -500,8 +520,8 @@ WHEN a.[bmi] >29.9 THEN 'Obese'
 ELSE 'Unknown' END AS 'BMI',
 a.sex,
 a.is_carer,
-f.segment,
-f.practice_code,
+a.segment,
+a.practice_code,
 a.attribute_period,
 a.Main_ethnic_group
 INTO [modelling_sql_area].[dbo].[FB_diab]	
