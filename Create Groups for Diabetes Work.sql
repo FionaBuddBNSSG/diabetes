@@ -503,7 +503,7 @@ FROM (SELECT a.nhs_number, segment, a.diabetes_2,
 
 DROP TABLE IF EXISTS [modelling_sql_area].[dbo].[FB_diab]	
 
-select a.nhs_number, a.diabetes_2,
+select GETDATE() AS 'Last Updated', a.nhs_number, a.diabetes_2,
 CASE WHEN b.nhs_number IS NOT NULL AND c.nhs_number IS NULL THEN 1
 	WHEN b.nhs_number IS NULL AND c.nhs_number IS NOT NULL THEN 2
 	WHEN b.nhs_number IS NOT NULL AND c.nhs_number IS NOT NULL  THEN 3
